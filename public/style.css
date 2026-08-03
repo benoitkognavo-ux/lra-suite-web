@@ -74,3 +74,13 @@ th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid #eee; }
 .hint { font-size: 12px; color: #8a92a0; margin: 4px 0 0; }
 .login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 16px; }
 .login-card { max-width: 380px; width: 100%; }
+.form-actions { display: flex; gap: 10px; }
+.form-actions .btn { flex: 1; }
+#cases-departements { display: flex; flex-wrap: wrap; gap: 10px; }
+.case-departement {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 14px; font-weight: 500; color: #1f2430;
+  border: 1px solid #ccd2da; border-radius: 8px; padding: 8px 12px;
+  margin: 0; cursor: pointer;
+}
+.case-departement input { width: auto; }

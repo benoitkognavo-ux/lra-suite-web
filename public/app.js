@@ -83,7 +83,7 @@ function afficherApp() {
     <header>
       <div>
         <h1>LRA Suite — Portail terrain</h1>
-        <div class="sub">${utilisateurCourant.nom}${utilisateurCourant.departement ? " · " + utilisateurCourant.departement : " · Administrateur"}</div>
+        <div class="sub">${utilisateurCourant.nom}${utilisateurCourant.departements && utilisateurCourant.departements.length ? " · " + utilisateurCourant.departements.join(", ") : " · Administrateur"}</div>
       </div>
       <button id="btn-logout">Déconnexion</button>
     </header>
@@ -97,7 +97,17 @@ function afficherApp() {
 // ---------------- Vue collaborateur : saisie quotidienne ----------------
 function afficherSaisie() {
   const main = document.getElementById("main");
+  const plusieursDepartements = utilisateurCourant.departements.length > 1;
+  const optionsDepartements = utilisateurCourant.departements.map((d) => `<option value="${d}">${d}</option>`).join("");
   main.innerHTML = `
+    ${plusieursDepartements ? `
+      <div class="card">
+        <label>Département concerné par cette saisie
+          <select id="saisie-departement">${optionsDepartements}</select>
+        </label>
+      </div>
+    ` : ""}
+
     <div class="card">
       <h2>Travaux réalisés aujourd'hui</h2>
       <label>Catégorie
@@ -115,7 +125,7 @@ function afficherSaisie() {
     </div>
 
     <div class="card">
-      <h2>Matériaux — ${utilisateurCourant.departement}</h2>
+      <h2>Matériaux${plusieursDepartements ? "" : " — " + utilisateurCourant.departements[0]}</h2>
       <label>Matériau
         <select id="mat-materiau">
           ${Object.keys(MATERIAUX).map((m) => `<option value="${m}">${m}</option>`).join("")}
@@ -151,9 +161,15 @@ function afficherSaisie() {
   document.getElementById("mat-materiau").addEventListener("change", majOptionsMateriau);
   majOptionsMateriau();
 
+  function departementSaisieActuel() {
+    const select = document.getElementById("saisie-departement");
+    return select ? select.value : utilisateurCourant.departements[0];
+  }
+
   document.getElementById("btn-tr-save").addEventListener("click", async () => {
     try {
       await api("/saisie/travaux", { method: "POST", body: {
+        departement: departementSaisieActuel(),
         categorie: document.getElementById("tr-categorie").value,
         localite: document.getElementById("tr-localite").value,
         type_poteau: document.getElementById("tr-type").value,
@@ -173,6 +189,7 @@ function afficherSaisie() {
   document.getElementById("btn-mat-save").addEventListener("click", async () => {
     try {
       await api("/saisie/materiaux", { method: "POST", body: {
+        departement: departementSaisieActuel(),
         materiau: document.getElementById("mat-materiau").value,
         etape: document.getElementById("mat-etape").value,
         quantite: document.getElementById("mat-quantite").value,
@@ -192,15 +209,17 @@ function afficherSaisie() {
 
 async function chargerMesSaisies() {
   const data = await api("/saisie/mes-saisies");
+  const plusieursDepartements = utilisateurCourant.departements.length > 1;
+  const prefixeDep = (dep) => (plusieursDepartements ? `[${dep}] ` : "");
   const lignes = [
     ...data.travaux.map((r) => ({
       date: r.date_saisie.slice(0, 10),
-      texte: `${CATEGORIE_LABEL[r.categorie]} — ${r.localite}${r.type_poteau ? " (" + r.type_poteau + ")" : ""} : ${r.quantite}`,
+      texte: `${prefixeDep(r.departement)}${CATEGORIE_LABEL[r.categorie]} — ${r.localite}${r.type_poteau ? " (" + r.type_poteau + ")" : ""} : ${r.quantite}`,
       ts: r.date_creation,
     })),
     ...data.materiaux.map((r) => ({
       date: r.date_saisie.slice(0, 10),
-      texte: `${r.materiau} ${ETAPE_LABEL[r.etape].toLowerCase()} : ${r.quantite} ${r.unite}`,
+      texte: `${prefixeDep(r.departement)}${r.materiau} ${ETAPE_LABEL[r.etape].toLowerCase()} : ${r.quantite} ${r.unite}`,
       ts: r.date_creation,
     })),
   ].sort((a, b) => new Date(b.ts) - new Date(a.ts));
@@ -210,20 +229,38 @@ async function chargerMesSaisies() {
 }
 
 // ---------------- Vue admin : gestion des accès ----------------
+const DEPARTEMENTS_CONNUS = ["ATACORA", "BORGOU", "DONGA", "ALIBORI"];
+let editingUserId = null;
+
+function casesDepartements(departementsCoches = []) {
+  return DEPARTEMENTS_CONNUS.map((d) => `
+    <label class="case-departement">
+      <input type="checkbox" value="${d}" ${departementsCoches.includes(d) ? "checked" : ""} /> ${d}
+    </label>
+  `).join("");
+}
+
+function departementsCoches() {
+  return [...document.querySelectorAll("#cases-departements input:checked")].map((c) => c.value);
+}
+
 async function afficherAdmin() {
   const main = document.getElementById("main");
   main.innerHTML = `
     <div class="card">
-      <h2>Ajouter un collaborateur</h2>
-      <label>Nom complet<input id="ad-nom" /></label>
-      <label>Identifiant de connexion<input id="ad-identifiant" placeholder="ex: jean.atacora" /></label>
-      <label>Mot de passe initial<input id="ad-mdp" type="text" placeholder="au moins 6 caractères" /></label>
-      <label>Département<input id="ad-departement" list="dl-departements" placeholder="ex: ATACORA" /></label>
-      <datalist id="dl-departements">
-        <option value="ATACORA"></option><option value="BORGOU"></option>
-        <option value="DONGA"></option><option value="ALIBORI"></option>
-      </datalist>
-      <button class="btn" id="btn-ad-save">Créer le compte</button>
+      <b id="ad-form-title">Ajouter un collaborateur</b>
+      <div id="ad-champs-nouveau">
+        <label>Nom complet<input id="ad-nom" /></label>
+        <label>Identifiant de connexion<input id="ad-identifiant" placeholder="ex: jean.atacora" /></label>
+        <label>Mot de passe initial<input id="ad-mdp" type="text" placeholder="au moins 6 caractères" /></label>
+      </div>
+      <label>Département(s) — un collaborateur peut en gérer plusieurs
+        <div id="cases-departements">${casesDepartements()}</div>
+      </label>
+      <div class="form-actions">
+        <button class="btn" id="btn-ad-save">Créer le compte</button>
+        <button class="btn secondary" id="btn-ad-cancel" style="display:none;">Annuler</button>
+      </div>
       <div id="msg-ad" class="msg hidden"></div>
     </div>
 
@@ -231,24 +268,32 @@ async function afficherAdmin() {
       <h2>Comptes existants</h2>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Nom</th><th>Identifiant</th><th>Département</th><th>Statut</th><th></th></tr></thead>
+          <thead><tr><th>Nom</th><th>Identifiant</th><th>Département(s)</th><th>Statut</th><th></th></tr></thead>
           <tbody id="tbody-users"></tbody>
         </table>
       </div>
     </div>
   `;
 
+  document.getElementById("btn-ad-cancel").addEventListener("click", () => afficherAdmin());
+
   document.getElementById("btn-ad-save").addEventListener("click", async () => {
     try {
-      await api("/admin/users", { method: "POST", body: {
-        nom: document.getElementById("ad-nom").value,
-        identifiant: document.getElementById("ad-identifiant").value,
-        motDePasse: document.getElementById("ad-mdp").value,
-        departement: document.getElementById("ad-departement").value,
-      }});
-      afficherMessage("msg-ad", "Compte créé.", true);
-      ["ad-nom", "ad-identifiant", "ad-mdp", "ad-departement"].forEach((id) => (document.getElementById(id).value = ""));
-      chargerUsers();
+      const deps = departementsCoches();
+      if (editingUserId) {
+        await api(`/admin/users/${editingUserId}/departements`, { method: "PATCH", body: { departements: deps } });
+        afficherMessage("msg-ad", "Départements mis à jour.", true);
+      } else {
+        await api("/admin/users", { method: "POST", body: {
+          nom: document.getElementById("ad-nom").value,
+          identifiant: document.getElementById("ad-identifiant").value,
+          motDePasse: document.getElementById("ad-mdp").value,
+          departements: deps,
+        }});
+        afficherMessage("msg-ad", "Compte créé.", true);
+      }
+      editingUserId = null;
+      afficherAdmin();
     } catch (err) {
       afficherMessage("msg-ad", err.message, false);
     }
@@ -257,16 +302,29 @@ async function afficherAdmin() {
   await chargerUsers();
 }
 
+function modifierDepartements(id, nom, departementsActuels) {
+  editingUserId = id;
+  document.getElementById("ad-form-title").textContent = `Départements de ${nom}`;
+  document.getElementById("ad-champs-nouveau").style.display = "none";
+  document.getElementById("cases-departements").innerHTML = casesDepartements(departementsActuels);
+  document.getElementById("btn-ad-save").textContent = "Enregistrer les départements";
+  document.getElementById("btn-ad-cancel").style.display = "inline-block";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
 async function chargerUsers() {
   const { users } = await api("/admin/users");
   document.getElementById("tbody-users").innerHTML = users.map((u) => `
     <tr>
       <td>${u.nom}</td>
       <td>${u.identifiant}</td>
-      <td>${u.departement || (u.role === "admin" ? "— (admin)" : "")}</td>
+      <td>${u.departements && u.departements.length ? u.departements.join(", ") : (u.role === "admin" ? "— (admin)" : "")}</td>
       <td><span class="badge ${u.actif ? "actif" : "inactif"}">${u.actif ? "Autorisé" : "Retiré"}</span></td>
       <td>
-        ${u.role === "admin" ? "" : `<button class="btn small ${u.actif ? "danger" : ""}" data-toggle="${u.id}" data-actif="${u.actif}">${u.actif ? "Retirer l'accès" : "Autoriser"}</button>`}
+        ${u.role === "admin" ? "" : `
+          <button class="btn small secondary" data-modifier-dep="${u.id}">Départements</button>
+          <button class="btn small ${u.actif ? "danger" : ""}" data-toggle="${u.id}" data-actif="${u.actif}">${u.actif ? "Retirer l'accès" : "Autoriser"}</button>
+        `}
       </td>
     </tr>
   `).join("") || `<tr><td colspan="5">Aucun compte pour l'instant.</td></tr>`;
@@ -276,6 +334,12 @@ async function chargerUsers() {
     const actifActuel = btn.dataset.actif === "true";
     await api(`/admin/users/${id}/actif`, { method: "PATCH", body: { actif: !actifActuel } });
     chargerUsers();
+  }));
+
+  document.querySelectorAll("[data-modifier-dep]").forEach((btn) => btn.addEventListener("click", () => {
+    const id = Number(btn.dataset.modifierDep);
+    const u = users.find((x) => x.id === id);
+    if (u) modifierDepartements(id, u.nom, u.departements || []);
   }));
 }
 
