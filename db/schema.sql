@@ -56,3 +56,19 @@ CREATE TABLE IF NOT EXISTS api_keys (
   actif BOOLEAN NOT NULL DEFAULT true,
   date_creation TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Départements assignés à un collaborateur (certains gèrent plusieurs
+-- départements). La colonne users.departement reste renseignée en plus
+-- (avec le premier département) pour compatibilité, mais l'autorisation et
+-- la saisie s'appuient désormais sur cette table.
+CREATE TABLE IF NOT EXISTS user_departements (
+  utilisateur_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  departement TEXT NOT NULL,
+  PRIMARY KEY (utilisateur_id, departement)
+);
+
+-- Reprend automatiquement les comptes créés avant l'introduction de cette
+-- table (qui n'avaient qu'un seul département dans users.departement).
+INSERT INTO user_departements (utilisateur_id, departement)
+SELECT id, departement FROM users WHERE departement IS NOT NULL AND departement <> ''
+ON CONFLICT (utilisateur_id, departement) DO NOTHING;
