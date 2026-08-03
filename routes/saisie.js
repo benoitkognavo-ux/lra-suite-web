@@ -115,6 +115,16 @@ router.post("/documents", upload.single("fichier"), async (req, res) => {
   res.json({ ok: true, document: rows[0] });
 });
 
+// Référentiel des localités par département (poussé par le logiciel de
+// bureau à chaque synchronisation) — sert à proposer une liste déroulante
+// aux collaborateurs plutôt qu'une saisie libre. Renvoyé en entier (pas
+// seulement les départements du collaborateur) : le frontend filtre
+// localement selon le département choisi pour cette saisie.
+router.get("/localites", async (req, res) => {
+  const { rows } = await pool.query("SELECT departement, localite FROM localites_referentiel ORDER BY departement, localite");
+  res.json({ localites: rows });
+});
+
 // Historique personnel (30 derniers jours) — pour que le collaborateur puisse
 // vérifier ce qu'il a déjà saisi, mais uniquement ses propres saisies.
 router.get("/mes-saisies", async (req, res) => {

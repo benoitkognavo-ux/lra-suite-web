@@ -58,4 +58,37 @@ router.get("/documents/:id/fichier", async (req, res) => {
   res.send(doc.contenu);
 });
 
+// Reçoit le référentiel des localités par département depuis le logiciel de
+// bureau (source de vérité unique : le projet actif). Remplace entièrement
+// le contenu à chaque appel — si une localité est retirée côté bureau, elle
+// disparaît aussi ici au prochain envoi. Sert à proposer une liste
+// déroulante aux collaborateurs plutôt qu'une saisie libre (voir
+// GET /api/saisie/localites).
+router.put("/referentiel/localites", async (req, res) => {
+  const { localites } = req.body;
+  if (!Array.isArray(localites)) return res.status(400).json({ erreur: "Liste de localités invalide." });
+  const propre = localites
+    .map((l) => ({ departement: (l.departement || "").trim().toUpperCase(), localite: (l.localite || "").trim().toUpperCase() }))
+    .filter((l) => l.departement && l.localite);
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("DELETE FROM localites_referentiel");
+    for (const l of propre) {
+      await client.query(
+        "INSERT INTO localites_referentiel (departement, localite) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+        [l.departement, l.localite]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+  res.json({ ok: true, total: propre.length });
+});
+
 module.exports = router;
