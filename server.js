@@ -47,6 +47,9 @@ app.get("*", (req, res) => {
 // interceptée fasse planter le processus (Express 4 ne catch pas les rejets
 // de promesse dans les handlers par défaut).
 app.use((err, req, res, next) => {
+  if (err && err.code === "LIMIT_FILE_SIZE") {
+    return res.status(400).json({ erreur: "Ce fichier dépasse la taille maximale autorisée (15 Mo)." });
+  }
   console.error(err);
   res.status(500).json({ erreur: "Erreur interne du serveur." });
 });
