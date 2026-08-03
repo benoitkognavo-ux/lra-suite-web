@@ -1,0 +1,19 @@
+{
+  "name": "lra-suite-web",
+  "version": "1.0.0",
+  "description": "LRA Suite - Portail web de saisie terrain (travaux, matériaux) par les collaborateurs, avec gestion des accès par département.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "migrate": "node scripts/migrate.js",
+    "seed-admin": "node scripts/seed-admin.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "connect-pg-simple": "^9.0.1",
+    "express": "^4.19.2",
+    "express-async-errors": "^3.1.1",
+    "express-session": "^1.18.0",
+    "pg": "^8.11.5"
+  }
+}
