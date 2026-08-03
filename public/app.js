@@ -6,7 +6,24 @@ const MATERIAUX = {
   "Concassé 15/25": { unites: ["m³", "Tonne"], etapes: ["Livraison"] },
 };
 const ETAPE_LABEL = { Livraison: "Reçu", Utilisation: "Utilisé" };
-const CATEGORIE_LABEL = { Implantation: "Poteaux implantés", PointesDiamant: "Pointes de diamant réalisées" };
+const TYPE_DOCUMENT_LABEL = {
+  PVReceptionSite: "PV de réception — site",
+  PVReceptionUsine: "PV de réception — usine",
+  BordereauLivraisonPoteaux: "Bordereau de livraison — poteaux",
+  BordereauLivraisonCiment: "Bordereau de livraison — ciment",
+  BordereauLivraisonConcasse: "Bordereau de livraison — concassé",
+};
+// Les clés doivent correspondre EXACTEMENT aux catégories du logiciel de
+// bureau (table travaux, colonne categorie) pour que la synchronisation
+// incrémente les bonnes lignes.
+const CATEGORIE_LABEL = {
+  Implantation: "Poteaux implantés",
+  FouillesImplantation: "Fouilles pour implantation réalisées",
+  FouillesMALTTerre: "Fouilles mise à la terre — Terre réalisées",
+  FouillesMALTMasse: "Fouilles mise à la terre — Masse réalisées",
+  PointesDiamant: "Pointes de diamant réalisées",
+  Plateforme: "Plateformes de manœuvre réalisées",
+};
 
 let utilisateurCourant = null;
 
@@ -16,6 +33,15 @@ async function api(path, options = {}) {
     headers: options.body ? { "Content-Type": "application/json" } : undefined,
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.erreur || "Erreur inconnue.");
+  return data;
+}
+
+// Variante pour l'envoi de fichiers : pas de Content-Type manuel (le
+// navigateur ajoute lui-même la limite "boundary" du multipart).
+async function apiEnvoyerFichier(path, formData) {
+  const res = await fetch("/api" + path, { method: "POST", body: formData });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.erreur || "Erreur inconnue.");
   return data;
@@ -112,8 +138,7 @@ function afficherSaisie() {
       <h2>Travaux réalisés aujourd'hui</h2>
       <label>Catégorie
         <select id="tr-categorie">
-          <option value="Implantation">Poteaux implantés</option>
-          <option value="PointesDiamant">Pointes de diamant réalisées</option>
+          ${Object.entries(CATEGORIE_LABEL).map(([v, label]) => `<option value="${v}">${label}</option>`).join("")}
         </select>
       </label>
       <label>Localité<input id="tr-localite" placeholder="ex: BORIYOURE" /></label>
@@ -142,6 +167,20 @@ function afficherSaisie() {
     </div>
 
     <div class="card">
+      <h2>Envoyer un document (PV, bordereau…)</h2>
+      <p class="hint" style="margin-top:0;">Prenez le document en photo ou scannez-le, puis envoyez-le ici — il sera disponible dans le logiciel de bureau après la prochaine synchronisation.</p>
+      <label>Type de document
+        <select id="doc-type">
+          ${Object.entries(TYPE_DOCUMENT_LABEL).map(([v, label]) => `<option value="${v}">${label}</option>`).join("")}
+        </select>
+      </label>
+      <label>Fichier (photo ou PDF)<input id="doc-fichier" type="file" accept="application/pdf,image/*" capture="environment" /></label>
+      <label>Date<input id="doc-date" type="date" /></label>
+      <button class="btn" id="btn-doc-save">Envoyer</button>
+      <div id="msg-doc" class="msg hidden"></div>
+    </div>
+
+    <div class="card">
       <h2>Mes dernières saisies (30 derniers jours)</h2>
       <ul class="liste-saisies" id="liste-saisies"><li>Chargement…</li></ul>
     </div>
@@ -149,6 +188,7 @@ function afficherSaisie() {
 
   document.getElementById("tr-date").value = auj();
   document.getElementById("mat-date").value = auj();
+  document.getElementById("doc-date").value = auj();
 
   function majOptionsMateriau() {
     const m = document.getElementById("mat-materiau").value;
@@ -204,6 +244,24 @@ function afficherSaisie() {
     }
   });
 
+  document.getElementById("btn-doc-save").addEventListener("click", async () => {
+    try {
+      const fichier = document.getElementById("doc-fichier").files[0];
+      if (!fichier) { afficherMessage("msg-doc", "Merci de choisir un fichier.", false); return; }
+      const formData = new FormData();
+      formData.append("departement", departementSaisieActuel());
+      formData.append("type", document.getElementById("doc-type").value);
+      formData.append("date_saisie", document.getElementById("doc-date").value);
+      formData.append("fichier", fichier);
+      await apiEnvoyerFichier("/saisie/documents", formData);
+      afficherMessage("msg-doc", "Document envoyé.", true);
+      document.getElementById("doc-fichier").value = "";
+      chargerMesSaisies();
+    } catch (err) {
+      afficherMessage("msg-doc", err.message, false);
+    }
+  });
+
   chargerMesSaisies();
 }
 
@@ -220,6 +278,11 @@ async function chargerMesSaisies() {
     ...data.materiaux.map((r) => ({
       date: r.date_saisie.slice(0, 10),
       texte: `${prefixeDep(r.departement)}${r.materiau} ${ETAPE_LABEL[r.etape].toLowerCase()} : ${r.quantite} ${r.unite}`,
+      ts: r.date_creation,
+    })),
+    ...data.documents.map((r) => ({
+      date: r.date_saisie.slice(0, 10),
+      texte: `${prefixeDep(r.departement)}${TYPE_DOCUMENT_LABEL[r.type]} — ${r.nom_fichier}`,
       ts: r.date_creation,
     })),
   ].sort((a, b) => new Date(b.ts) - new Date(a.ts));
