@@ -103,3 +103,15 @@ CREATE TABLE IF NOT EXISTS documents_journal (
   date_creation TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_documents_journal_date_creation ON documents_journal (date_creation);
+
+-- Référentiel des localités par département, poussé automatiquement par le
+-- logiciel de bureau à chaque synchronisation (à partir du projet actif) :
+-- permet au portail web de proposer une liste déroulante aux collaborateurs
+-- plutôt qu'une saisie libre (qui provoquait des doublons du type
+-- "Boriyoure" / "BORIYOURE" ou des fautes de frappe). Remplacé entièrement à
+-- chaque envoi — voir PUT /api/referentiel/localites.
+CREATE TABLE IF NOT EXISTS localites_referentiel (
+  departement TEXT NOT NULL,
+  localite TEXT NOT NULL,
+  PRIMARY KEY (departement, localite)
+);
