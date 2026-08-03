@@ -1,8 +1,9 @@
-// Saisies quotidiennes des collaborateurs. Le département n'est JAMAIS pris
-// depuis le corps de la requête : il est toujours celui rattaché au compte de
-// l'utilisateur connecté (exigerCollaborateur l'a déjà vérifié), pour qu'un
-// collaborateur ne puisse jamais saisir — volontairement ou par erreur — dans
-// le département d'un autre.
+// Saisies quotidiennes des collaborateurs. Le département soumis est TOUJOURS
+// vérifié contre la liste des départements rattachés au compte de
+// l'utilisateur connecté (chargée par chargerUtilisateur) : un collaborateur
+// ne peut jamais saisir — volontairement ou par erreur — dans un département
+// qui ne lui a pas été explicitement autorisé par l'administrateur, même s'il
+// gère plusieurs départements.
 const express = require("express");
 const { pool } = require("../db/pool");
 
@@ -24,8 +25,16 @@ function nombrePositif(v) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+function departementAutorise(req, departementSoumis) {
+  const dep = (departementSoumis || "").trim().toUpperCase();
+  if (!dep || !req.utilisateur.departements.includes(dep)) return null;
+  return dep;
+}
+
 router.post("/travaux", async (req, res) => {
-  const { localite, type_poteau, categorie, quantite, date_saisie, commentaire } = req.body;
+  const { departement, localite, type_poteau, categorie, quantite, date_saisie, commentaire } = req.body;
+  const dep = departementAutorise(req, departement);
+  if (!dep) return res.status(403).json({ erreur: "Département invalide ou non autorisé pour ce compte." });
   const loc = (localite || "").trim().toUpperCase();
   if (!loc) return res.status(400).json({ erreur: "La localité est obligatoire." });
   if (!CATEGORIES_TRAVAUX.includes(categorie)) return res.status(400).json({ erreur: "Catégorie invalide." });
@@ -36,13 +45,15 @@ router.post("/travaux", async (req, res) => {
   const { rows } = await pool.query(
     `INSERT INTO travaux_journal (utilisateur_id, departement, localite, type_poteau, categorie, quantite, date_saisie, commentaire)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-    [req.utilisateur.id, req.utilisateur.departement, loc, (type_poteau || "").trim(), categorie, q, date, (commentaire || "").trim()]
+    [req.utilisateur.id, dep, loc, (type_poteau || "").trim(), categorie, q, date, (commentaire || "").trim()]
   );
   res.json({ ok: true, saisie: rows[0] });
 });
 
 router.post("/materiaux", async (req, res) => {
-  const { materiau, unite, etape, quantite, date_saisie, commentaire } = req.body;
+  const { departement, materiau, unite, etape, quantite, date_saisie, commentaire } = req.body;
+  const dep = departementAutorise(req, departement);
+  if (!dep) return res.status(403).json({ erreur: "Département invalide ou non autorisé pour ce compte." });
   const etapesAutorisees = MATERIAUX_ETAPES[materiau];
   if (!etapesAutorisees) return res.status(400).json({ erreur: "Matériau invalide." });
   if (!etapesAutorisees.includes(etape)) return res.status(400).json({ erreur: `Pour ${materiau}, seule(s) l'étape(s) ${etapesAutorisees.join(", ")} est/sont autorisée(s).` });
@@ -54,7 +65,7 @@ router.post("/materiaux", async (req, res) => {
   const { rows } = await pool.query(
     `INSERT INTO materiaux_journal (utilisateur_id, departement, materiau, unite, quantite, etape, date_saisie, commentaire)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-    [req.utilisateur.id, req.utilisateur.departement, materiau, unite.trim(), q, etape, date, (commentaire || "").trim()]
+    [req.utilisateur.id, dep, materiau, unite.trim(), q, etape, date, (commentaire || "").trim()]
   );
   res.json({ ok: true, saisie: rows[0] });
 });

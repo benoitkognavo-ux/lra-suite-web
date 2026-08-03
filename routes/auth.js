@@ -19,7 +19,8 @@ router.post("/login", async (req, res) => {
   if (!ok) return res.status(401).json({ erreur: "Identifiant ou mot de passe incorrect." });
 
   req.session.userId = u.id;
-  res.json({ ok: true, utilisateur: { id: u.id, nom: u.nom, role: u.role, departement: u.departement } });
+  const dep = await pool.query("SELECT departement FROM user_departements WHERE utilisateur_id = $1 ORDER BY departement", [u.id]);
+  res.json({ ok: true, utilisateur: { id: u.id, nom: u.nom, role: u.role, departements: dep.rows.map((r) => r.departement) } });
 });
 
 router.post("/logout", (req, res) => {
@@ -29,7 +30,7 @@ router.post("/logout", (req, res) => {
 router.get("/me", (req, res) => {
   if (!req.utilisateur) return res.json({ connecte: false });
   const u = req.utilisateur;
-  res.json({ connecte: true, utilisateur: { id: u.id, nom: u.nom, role: u.role, departement: u.departement } });
+  res.json({ connecte: true, utilisateur: { id: u.id, nom: u.nom, role: u.role, departements: u.departements } });
 });
 
 module.exports = router;
