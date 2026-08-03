@@ -26,6 +26,23 @@ const CATEGORIE_LABEL = {
 };
 
 let utilisateurCourant = null;
+let localitesParDepartement = {};
+
+// Récupère le référentiel des localités (poussé par le logiciel de bureau à
+// chaque synchronisation) et le regroupe par département — permet de
+// proposer une liste déroulante plutôt qu'une saisie libre.
+async function chargerLocalites() {
+  try {
+    const data = await api("/saisie/localites");
+    localitesParDepartement = {};
+    for (const l of data.localites) {
+      if (!localitesParDepartement[l.departement]) localitesParDepartement[l.departement] = [];
+      localitesParDepartement[l.departement].push(l.localite);
+    }
+  } catch (err) {
+    localitesParDepartement = {};
+  }
+}
 
 async function api(path, options = {}) {
   const res = await fetch("/api" + path, {
@@ -141,7 +158,10 @@ function afficherSaisie() {
           ${Object.entries(CATEGORIE_LABEL).map(([v, label]) => `<option value="${v}">${label}</option>`).join("")}
         </select>
       </label>
-      <label>Localité<input id="tr-localite" placeholder="ex: BORIYOURE" /></label>
+      <label>Localité
+        <select id="tr-localite" disabled><option value="">Chargement…</option></select>
+      </label>
+      <p class="hint" id="hint-localite" style="display:none;">Aucune localité configurée pour ce département — demandez à l'ingénieur de les ajouter dans le logiciel de bureau, puis de synchroniser.</p>
       <label>Type de poteau (optionnel)<input id="tr-type" placeholder="ex: 9A650" /></label>
       <label>Quantité réalisée aujourd'hui<input id="tr-quantite" type="number" min="1" step="1" /></label>
       <label>Date<input id="tr-date" type="date" /></label>
@@ -206,6 +226,32 @@ function afficherSaisie() {
     return select ? select.value : utilisateurCourant.departements[0];
   }
 
+  // Remplit la liste déroulante des localités à partir du référentiel envoyé
+  // par le logiciel de bureau, filtrée sur le département actuellement
+  // sélectionné pour cette saisie. Si aucune localité n'est configurée pour
+  // ce département, bloque l'enregistrement plutôt que d'accepter une saisie
+  // libre.
+  function majOptionsLocalite() {
+    const liste = localitesParDepartement[departementSaisieActuel()] || [];
+    const select = document.getElementById("tr-localite");
+    const btn = document.getElementById("btn-tr-save");
+    const hint = document.getElementById("hint-localite");
+    if (!liste.length) {
+      select.innerHTML = `<option value="">Aucune localité disponible</option>`;
+      select.disabled = true;
+      btn.disabled = true;
+      hint.style.display = "";
+    } else {
+      select.innerHTML = liste.map((l) => `<option value="${l}">${l}</option>`).join("");
+      select.disabled = false;
+      btn.disabled = false;
+      hint.style.display = "none";
+    }
+  }
+  const selectDepartement = document.getElementById("saisie-departement");
+  if (selectDepartement) selectDepartement.addEventListener("change", majOptionsLocalite);
+  chargerLocalites().then(majOptionsLocalite);
+
   document.getElementById("btn-tr-save").addEventListener("click", async () => {
     try {
       await api("/saisie/travaux", { method: "POST", body: {
@@ -217,7 +263,6 @@ function afficherSaisie() {
         date_saisie: document.getElementById("tr-date").value,
       }});
       afficherMessage("msg-tr", "Enregistré.", true);
-      document.getElementById("tr-localite").value = "";
       document.getElementById("tr-type").value = "";
       document.getElementById("tr-quantite").value = "";
       chargerMesSaisies();
