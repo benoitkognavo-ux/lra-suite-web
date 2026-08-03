@@ -51,5 +51,14 @@ app.use((err, req, res, next) => {
   res.status(500).json({ erreur: "Erreur interne du serveur." });
 });
 
+const { bootstrap } = require("./db/bootstrap");
+
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`LRA Suite Web à l'écoute sur le port ${port}`));
+bootstrap()
+  .then(() => {
+    app.listen(port, () => console.log(`LRA Suite Web à l'écoute sur le port ${port}`));
+  })
+  .catch((err) => {
+    console.error("Échec de l'initialisation de la base de données :", err);
+    process.exit(1);
+  });
