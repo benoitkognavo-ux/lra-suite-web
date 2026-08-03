@@ -1,0 +1,282 @@
+const MATERIAUX = {
+  "Ciment": { unites: ["Sac (50kg)", "kg", "Tonne"], etapes: ["Livraison", "Utilisation"] },
+  "Sable": { unites: ["m³", "Voyage (5m³)"], etapes: ["Livraison"] },
+  "Concassé": { unites: ["m³"], etapes: ["Livraison"] },
+  "Concassé 5/15": { unites: ["m³", "Tonne"], etapes: ["Livraison"] },
+  "Concassé 15/25": { unites: ["m³", "Tonne"], etapes: ["Livraison"] },
+};
+const ETAPE_LABEL = { Livraison: "Reçu", Utilisation: "Utilisé" };
+const CATEGORIE_LABEL = { Implantation: "Poteaux implantés", PointesDiamant: "Pointes de diamant réalisées" };
+
+let utilisateurCourant = null;
+
+async function api(path, options = {}) {
+  const res = await fetch("/api" + path, {
+    method: options.method || "GET",
+    headers: options.body ? { "Content-Type": "application/json" } : undefined,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.erreur || "Erreur inconnue.");
+  return data;
+}
+
+function auj() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function afficherMessage(id, texte, ok) {
+  const el = document.getElementById(id);
+  el.textContent = texte;
+  el.className = "msg " + (ok ? "ok" : "err");
+  el.classList.remove("hidden");
+  setTimeout(() => el.classList.add("hidden"), 5000);
+}
+
+// ---------------- Connexion ----------------
+async function verifierSession() {
+  const data = await api("/me");
+  if (data.connecte) {
+    utilisateurCourant = data.utilisateur;
+    afficherApp();
+  } else {
+    afficherLogin();
+  }
+}
+
+function afficherLogin() {
+  document.getElementById("app").innerHTML = `
+    <div class="login-wrap">
+      <div class="card login-card">
+        <h2>LRA Suite — Portail terrain</h2>
+        <label>Identifiant<input id="in-identifiant" autocomplete="username" /></label>
+        <label>Mot de passe<input id="in-mdp" type="password" autocomplete="current-password" /></label>
+        <button class="btn" id="btn-login">Se connecter</button>
+        <div id="msg-login" class="msg hidden"></div>
+      </div>
+    </div>
+  `;
+  document.getElementById("btn-login").addEventListener("click", async () => {
+    try {
+      const data = await api("/login", { method: "POST", body: {
+        identifiant: document.getElementById("in-identifiant").value.trim(),
+        motDePasse: document.getElementById("in-mdp").value,
+      }});
+      utilisateurCourant = data.utilisateur;
+      afficherApp();
+    } catch (err) {
+      afficherMessage("msg-login", err.message, false);
+    }
+  });
+  document.getElementById("in-mdp").addEventListener("keyup", (e) => { if (e.key === "Enter") document.getElementById("btn-login").click(); });
+}
+
+async function deconnecter() {
+  await api("/logout", { method: "POST" });
+  utilisateurCourant = null;
+  afficherLogin();
+}
+
+// ---------------- App ----------------
+function afficherApp() {
+  document.getElementById("app").innerHTML = `
+    <header>
+      <div>
+        <h1>LRA Suite — Portail terrain</h1>
+        <div class="sub">${utilisateurCourant.nom}${utilisateurCourant.departement ? " · " + utilisateurCourant.departement : " · Administrateur"}</div>
+      </div>
+      <button id="btn-logout">Déconnexion</button>
+    </header>
+    <main id="main"></main>
+  `;
+  document.getElementById("btn-logout").addEventListener("click", deconnecter);
+  if (utilisateurCourant.role === "admin") afficherAdmin();
+  else afficherSaisie();
+}
+
+// ---------------- Vue collaborateur : saisie quotidienne ----------------
+function afficherSaisie() {
+  const main = document.getElementById("main");
+  main.innerHTML = `
+    <div class="card">
+      <h2>Travaux réalisés aujourd'hui</h2>
+      <label>Catégorie
+        <select id="tr-categorie">
+          <option value="Implantation">Poteaux implantés</option>
+          <option value="PointesDiamant">Pointes de diamant réalisées</option>
+        </select>
+      </label>
+      <label>Localité<input id="tr-localite" placeholder="ex: BORIYOURE" /></label>
+      <label>Type de poteau (optionnel)<input id="tr-type" placeholder="ex: 9A650" /></label>
+      <label>Quantité réalisée aujourd'hui<input id="tr-quantite" type="number" min="1" step="1" /></label>
+      <label>Date<input id="tr-date" type="date" /></label>
+      <button class="btn" id="btn-tr-save">Enregistrer</button>
+      <div id="msg-tr" class="msg hidden"></div>
+    </div>
+
+    <div class="card">
+      <h2>Matériaux — ${utilisateurCourant.departement}</h2>
+      <label>Matériau
+        <select id="mat-materiau">
+          ${Object.keys(MATERIAUX).map((m) => `<option value="${m}">${m}</option>`).join("")}
+        </select>
+      </label>
+      <label id="lbl-mat-etape">Mouvement
+        <select id="mat-etape"></select>
+      </label>
+      <label>Quantité<input id="mat-quantite" type="number" min="0.01" step="0.01" /></label>
+      <label>Unité<select id="mat-unite"></select></label>
+      <label>Date<input id="mat-date" type="date" /></label>
+      <button class="btn" id="btn-mat-save">Enregistrer</button>
+      <div id="msg-mat" class="msg hidden"></div>
+    </div>
+
+    <div class="card">
+      <h2>Mes dernières saisies (30 derniers jours)</h2>
+      <ul class="liste-saisies" id="liste-saisies"><li>Chargement…</li></ul>
+    </div>
+  `;
+
+  document.getElementById("tr-date").value = auj();
+  document.getElementById("mat-date").value = auj();
+
+  function majOptionsMateriau() {
+    const m = document.getElementById("mat-materiau").value;
+    const cfg = MATERIAUX[m];
+    const etapeSelect = document.getElementById("mat-etape");
+    etapeSelect.innerHTML = cfg.etapes.map((e) => `<option value="${e}">${ETAPE_LABEL[e]}</option>`).join("");
+    document.getElementById("lbl-mat-etape").style.display = cfg.etapes.length > 1 ? "" : "none";
+    document.getElementById("mat-unite").innerHTML = cfg.unites.map((u) => `<option value="${u}">${u}</option>`).join("");
+  }
+  document.getElementById("mat-materiau").addEventListener("change", majOptionsMateriau);
+  majOptionsMateriau();
+
+  document.getElementById("btn-tr-save").addEventListener("click", async () => {
+    try {
+      await api("/saisie/travaux", { method: "POST", body: {
+        categorie: document.getElementById("tr-categorie").value,
+        localite: document.getElementById("tr-localite").value,
+        type_poteau: document.getElementById("tr-type").value,
+        quantite: document.getElementById("tr-quantite").value,
+        date_saisie: document.getElementById("tr-date").value,
+      }});
+      afficherMessage("msg-tr", "Enregistré.", true);
+      document.getElementById("tr-localite").value = "";
+      document.getElementById("tr-type").value = "";
+      document.getElementById("tr-quantite").value = "";
+      chargerMesSaisies();
+    } catch (err) {
+      afficherMessage("msg-tr", err.message, false);
+    }
+  });
+
+  document.getElementById("btn-mat-save").addEventListener("click", async () => {
+    try {
+      await api("/saisie/materiaux", { method: "POST", body: {
+        materiau: document.getElementById("mat-materiau").value,
+        etape: document.getElementById("mat-etape").value,
+        quantite: document.getElementById("mat-quantite").value,
+        unite: document.getElementById("mat-unite").value,
+        date_saisie: document.getElementById("mat-date").value,
+      }});
+      afficherMessage("msg-mat", "Enregistré.", true);
+      document.getElementById("mat-quantite").value = "";
+      chargerMesSaisies();
+    } catch (err) {
+      afficherMessage("msg-mat", err.message, false);
+    }
+  });
+
+  chargerMesSaisies();
+}
+
+async function chargerMesSaisies() {
+  const data = await api("/saisie/mes-saisies");
+  const lignes = [
+    ...data.travaux.map((r) => ({
+      date: r.date_saisie.slice(0, 10),
+      texte: `${CATEGORIE_LABEL[r.categorie]} — ${r.localite}${r.type_poteau ? " (" + r.type_poteau + ")" : ""} : ${r.quantite}`,
+      ts: r.date_creation,
+    })),
+    ...data.materiaux.map((r) => ({
+      date: r.date_saisie.slice(0, 10),
+      texte: `${r.materiau} ${ETAPE_LABEL[r.etape].toLowerCase()} : ${r.quantite} ${r.unite}`,
+      ts: r.date_creation,
+    })),
+  ].sort((a, b) => new Date(b.ts) - new Date(a.ts));
+
+  const ul = document.getElementById("liste-saisies");
+  ul.innerHTML = lignes.map((l) => `<li><b>${l.date}</b> — ${l.texte}</li>`).join("") || "<li>Aucune saisie pour l'instant.</li>";
+}
+
+// ---------------- Vue admin : gestion des accès ----------------
+async function afficherAdmin() {
+  const main = document.getElementById("main");
+  main.innerHTML = `
+    <div class="card">
+      <h2>Ajouter un collaborateur</h2>
+      <label>Nom complet<input id="ad-nom" /></label>
+      <label>Identifiant de connexion<input id="ad-identifiant" placeholder="ex: jean.atacora" /></label>
+      <label>Mot de passe initial<input id="ad-mdp" type="text" placeholder="au moins 6 caractères" /></label>
+      <label>Département<input id="ad-departement" list="dl-departements" placeholder="ex: ATACORA" /></label>
+      <datalist id="dl-departements">
+        <option value="ATACORA"></option><option value="BORGOU"></option>
+        <option value="DONGA"></option><option value="ALIBORI"></option>
+      </datalist>
+      <button class="btn" id="btn-ad-save">Créer le compte</button>
+      <div id="msg-ad" class="msg hidden"></div>
+    </div>
+
+    <div class="card">
+      <h2>Comptes existants</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Nom</th><th>Identifiant</th><th>Département</th><th>Statut</th><th></th></tr></thead>
+          <tbody id="tbody-users"></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("btn-ad-save").addEventListener("click", async () => {
+    try {
+      await api("/admin/users", { method: "POST", body: {
+        nom: document.getElementById("ad-nom").value,
+        identifiant: document.getElementById("ad-identifiant").value,
+        motDePasse: document.getElementById("ad-mdp").value,
+        departement: document.getElementById("ad-departement").value,
+      }});
+      afficherMessage("msg-ad", "Compte créé.", true);
+      ["ad-nom", "ad-identifiant", "ad-mdp", "ad-departement"].forEach((id) => (document.getElementById(id).value = ""));
+      chargerUsers();
+    } catch (err) {
+      afficherMessage("msg-ad", err.message, false);
+    }
+  });
+
+  await chargerUsers();
+}
+
+async function chargerUsers() {
+  const { users } = await api("/admin/users");
+  document.getElementById("tbody-users").innerHTML = users.map((u) => `
+    <tr>
+      <td>${u.nom}</td>
+      <td>${u.identifiant}</td>
+      <td>${u.departement || (u.role === "admin" ? "— (admin)" : "")}</td>
+      <td><span class="badge ${u.actif ? "actif" : "inactif"}">${u.actif ? "Autorisé" : "Retiré"}</span></td>
+      <td>
+        ${u.role === "admin" ? "" : `<button class="btn small ${u.actif ? "danger" : ""}" data-toggle="${u.id}" data-actif="${u.actif}">${u.actif ? "Retirer l'accès" : "Autoriser"}</button>`}
+      </td>
+    </tr>
+  `).join("") || `<tr><td colspan="5">Aucun compte pour l'instant.</td></tr>`;
+
+  document.querySelectorAll("[data-toggle]").forEach((btn) => btn.addEventListener("click", async () => {
+    const id = Number(btn.dataset.toggle);
+    const actifActuel = btn.dataset.actif === "true";
+    await api(`/admin/users/${id}/actif`, { method: "PATCH", body: { actif: !actifActuel } });
+    chargerUsers();
+  }));
+}
+
+verifierSession();
