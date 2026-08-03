@@ -9,7 +9,14 @@ async function chargerUtilisateur(req, res, next) {
   if (req.session && req.session.userId) {
     const { rows } = await pool.query("SELECT * FROM users WHERE id = $1", [req.session.userId]);
     const u = rows[0];
-    if (u && u.actif) req.utilisateur = u;
+    if (u && u.actif) {
+      const dep = await pool.query(
+        "SELECT departement FROM user_departements WHERE utilisateur_id = $1 ORDER BY departement",
+        [u.id]
+      );
+      u.departements = dep.rows.map((r) => r.departement);
+      req.utilisateur = u;
+    }
   }
   next();
 }
@@ -26,8 +33,8 @@ function exigerAdmin(req, res, next) {
 
 function exigerCollaborateur(req, res, next) {
   if (!req.utilisateur) return res.status(401).json({ erreur: "Non connecté, ou compte désactivé." });
-  if (req.utilisateur.role !== "collaborateur" || !req.utilisateur.departement) {
-    return res.status(403).json({ erreur: "Ce compte n'est pas rattaché à un département." });
+  if (req.utilisateur.role !== "collaborateur" || !req.utilisateur.departements || !req.utilisateur.departements.length) {
+    return res.status(403).json({ erreur: "Ce compte n'est rattaché à aucun département." });
   }
   next();
 }
