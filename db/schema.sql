@@ -24,13 +24,21 @@ CREATE TABLE IF NOT EXISTS travaux_journal (
   departement TEXT NOT NULL,
   localite TEXT NOT NULL,
   type_poteau TEXT NOT NULL DEFAULT '',
-  categorie TEXT NOT NULL CHECK (categorie IN ('Implantation', 'PointesDiamant')),
+  categorie TEXT NOT NULL,
   quantite NUMERIC NOT NULL CHECK (quantite > 0),
   date_saisie DATE NOT NULL,
   commentaire TEXT NOT NULL DEFAULT '',
   date_creation TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_travaux_journal_date_creation ON travaux_journal (date_creation);
+
+-- Contrainte des catégories tenue à jour séparément (plutôt que dans le
+-- CREATE TABLE ci-dessus) pour pouvoir l'élargir plus tard sans jamais
+-- toucher aux lignes déjà enregistrées : ces valeurs doivent correspondre
+-- EXACTEMENT aux catégories du logiciel de bureau (table travaux).
+ALTER TABLE travaux_journal DROP CONSTRAINT IF EXISTS travaux_journal_categorie_check;
+ALTER TABLE travaux_journal ADD CONSTRAINT travaux_journal_categorie_check
+  CHECK (categorie IN ('Implantation', 'FouillesImplantation', 'FouillesMALTTerre', 'FouillesMALTMasse', 'PointesDiamant', 'Plateforme'));
 
 -- Saisies quotidiennes des mouvements matériaux (réception, utilisation).
 CREATE TABLE IF NOT EXISTS materiaux_journal (
@@ -72,3 +80,26 @@ CREATE TABLE IF NOT EXISTS user_departements (
 INSERT INTO user_departements (utilisateur_id, departement)
 SELECT id, departement FROM users WHERE departement IS NOT NULL AND departement <> ''
 ON CONFLICT (utilisateur_id, departement) DO NOTHING;
+
+-- Documents scannés/photographiés envoyés par les collaborateurs (PV de
+-- réception, bordereaux de livraison). Le fichier est stocké directement en
+-- base (colonne contenu) plutôt que sur le disque du service web : le disque
+-- de Render est effacé à chaque redémarrage sur le palier gratuit, alors que
+-- la base de données, elle, persiste.
+CREATE TABLE IF NOT EXISTS documents_journal (
+  id SERIAL PRIMARY KEY,
+  utilisateur_id INTEGER NOT NULL REFERENCES users(id),
+  departement TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN (
+    'PVReceptionSite', 'PVReceptionUsine',
+    'BordereauLivraisonPoteaux', 'BordereauLivraisonCiment', 'BordereauLivraisonConcasse'
+  )),
+  nom_fichier TEXT NOT NULL,
+  type_mime TEXT NOT NULL DEFAULT 'application/octet-stream',
+  taille INTEGER NOT NULL,
+  contenu BYTEA NOT NULL,
+  commentaire TEXT NOT NULL DEFAULT '',
+  date_saisie DATE NOT NULL,
+  date_creation TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_documents_journal_date_creation ON documents_journal (date_creation);
