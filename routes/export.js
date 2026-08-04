@@ -35,11 +35,17 @@ router.get("/export", async (req, res) => {
      WHERE dj.date_creation > $1 ORDER BY dj.date_creation ASC`,
     [since]
   );
+  const equipements = await pool.query(
+    `SELECT ej.*, u.nom AS utilisateur_nom FROM equipements_journal ej
+     JOIN users u ON u.id = ej.utilisateur_id
+     WHERE ej.date_creation > $1 ORDER BY ej.date_creation ASC`,
+    [since]
+  );
 
-  const toutesLesDates = [...travaux.rows, ...materiaux.rows, ...documents.rows].map((r) => new Date(r.date_creation).getTime());
+  const toutesLesDates = [...travaux.rows, ...materiaux.rows, ...documents.rows, ...equipements.rows].map((r) => new Date(r.date_creation).getTime());
   const dernierHorodatage = toutesLesDates.length ? new Date(Math.max(...toutesLesDates)).toISOString() : req.query.since || new Date(0).toISOString();
 
-  res.json({ travaux: travaux.rows, materiaux: materiaux.rows, documents: documents.rows, dernierHorodatage });
+  res.json({ travaux: travaux.rows, materiaux: materiaux.rows, documents: documents.rows, equipements: equipements.rows, dernierHorodatage });
 });
 
 // Télécharge le contenu binaire d'un document précis — appelé par le logiciel
@@ -58,18 +64,28 @@ router.get("/documents/:id/fichier", async (req, res) => {
   res.send(doc.contenu);
 });
 
-// Reçoit le référentiel des localités par département depuis le logiciel de
-// bureau (source de vérité unique : le projet actif). Remplace entièrement
-// le contenu à chaque appel — si une localité est retirée côté bureau, elle
-// disparaît aussi ici au prochain envoi. Sert à proposer une liste
-// déroulante aux collaborateurs plutôt qu'une saisie libre (voir
-// GET /api/saisie/localites).
+// Reçoit le référentiel des localités (et des départements) depuis le
+// logiciel de bureau (source de vérité unique : le projet actif). Remplace
+// entièrement le contenu à chaque appel — si une localité ou un département
+// est retiré côté bureau, il disparaît aussi ici au prochain envoi. Sert à
+// proposer des listes déroulantes aux collaborateurs plutôt qu'une saisie
+// libre (voir GET /api/saisie/localites). Le champ "departements" est
+// optionnel (compatibilité avec une ancienne version du logiciel de bureau
+// qui n'enverrait que "localites") : à défaut, on retombe sur les
+// départements déduits des localités envoyées — un département sans aucune
+// localité connue ne serait alors pas proposé (ex: destination de transfert
+// d'équipement dans un département qui n'a pas encore de localité saisie).
 router.put("/referentiel/localites", async (req, res) => {
-  const { localites } = req.body;
+  const { localites, departements } = req.body;
   if (!Array.isArray(localites)) return res.status(400).json({ erreur: "Liste de localités invalide." });
   const propre = localites
     .map((l) => ({ departement: (l.departement || "").trim().toUpperCase(), localite: (l.localite || "").trim().toUpperCase() }))
     .filter((l) => l.departement && l.localite);
+  const propreDepartements = [...new Set(
+    (Array.isArray(departements) ? departements : propre.map((l) => l.departement))
+      .map((d) => (d || "").trim().toUpperCase())
+      .filter(Boolean)
+  )];
 
   const client = await pool.connect();
   try {
@@ -81,6 +97,10 @@ router.put("/referentiel/localites", async (req, res) => {
         [l.departement, l.localite]
       );
     }
+    await client.query("DELETE FROM departements_referentiel");
+    for (const d of propreDepartements) {
+      await client.query("INSERT INTO departements_referentiel (departement) VALUES ($1) ON CONFLICT DO NOTHING", [d]);
+    }
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK");
@@ -88,7 +108,7 @@ router.put("/referentiel/localites", async (req, res) => {
   } finally {
     client.release();
   }
-  res.json({ ok: true, total: propre.length });
+  res.json({ ok: true, total: propre.length, totalDepartements: propreDepartements.length });
 });
 
 module.exports = router;

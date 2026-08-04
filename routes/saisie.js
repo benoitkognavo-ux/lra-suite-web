@@ -45,6 +45,16 @@ const MATERIAUX_ETAPES = {
   "Concassé 5/15": ["Livraison"],
   "Concassé 15/25": ["Livraison"],
 };
+// Le ciment est géré au niveau du département (pas besoin de préciser la
+// localité) — le sable et les concassés, eux, sont livrés directement à
+// chaque localité, donc la localité est obligatoire pour ces matériaux.
+const MATERIAUX_LOCALITE_REQUISE = {
+  Ciment: false,
+  Sable: true,
+  "Concassé": true,
+  "Concassé 5/15": true,
+  "Concassé 15/25": true,
+};
 
 function nombrePositif(v) {
   const n = Number(v);
@@ -77,7 +87,7 @@ router.post("/travaux", async (req, res) => {
 });
 
 router.post("/materiaux", async (req, res) => {
-  const { departement, materiau, unite, etape, quantite, date_saisie, commentaire } = req.body;
+  const { departement, materiau, unite, etape, quantite, date_saisie, commentaire, localite } = req.body;
   const dep = departementAutorise(req, departement);
   if (!dep) return res.status(403).json({ erreur: "Département invalide ou non autorisé pour ce compte." });
   const etapesAutorisees = MATERIAUX_ETAPES[materiau];
@@ -86,12 +96,58 @@ router.post("/materiaux", async (req, res) => {
   const q = nombrePositif(quantite);
   if (!q) return res.status(400).json({ erreur: "La quantité doit être un nombre positif." });
   if (!unite || !unite.trim()) return res.status(400).json({ erreur: "L'unité est obligatoire." });
+  const loc = (localite || "").trim().toUpperCase();
+  if (MATERIAUX_LOCALITE_REQUISE[materiau] && !loc) {
+    return res.status(400).json({ erreur: `La localité est obligatoire pour ${materiau} (livré directement sur site).` });
+  }
   const date = date_saisie || new Date().toISOString().slice(0, 10);
 
   const { rows } = await pool.query(
-    `INSERT INTO materiaux_journal (utilisateur_id, departement, materiau, unite, quantite, etape, date_saisie, commentaire)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-    [req.utilisateur.id, dep, materiau, unite.trim(), q, etape, date, (commentaire || "").trim()]
+    `INSERT INTO materiaux_journal (utilisateur_id, departement, localite, materiau, unite, quantite, etape, date_saisie, commentaire)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+    [req.utilisateur.id, dep, loc, materiau, unite.trim(), q, etape, date, (commentaire || "").trim()]
+  );
+  res.json({ ok: true, saisie: rows[0] });
+});
+
+// Mouvements d'équipements / matériel : ARRIVÉE (reçu dans un département) ou
+// TRANSFERT (envoyé d'un département vers un autre). Pour une arrivée, le
+// département soumis doit être autorisé pour ce compte (c'est là que le
+// matériel se trouve). Pour un transfert, c'est le département D'ORIGINE qui
+// doit être autorisé (c'est de là que le collaborateur l'envoie) — la
+// destination, elle, peut être n'importe quel autre département du projet.
+router.post("/equipements", async (req, res) => {
+  const { departement, departement_origine, designation, quantite, type_mouvement, date_saisie, commentaire } = req.body;
+  if (!["Arrivee", "Transfert"].includes(type_mouvement)) {
+    return res.status(400).json({ erreur: "Type de mouvement invalide." });
+  }
+  const desig = (designation || "").trim();
+  if (!desig) return res.status(400).json({ erreur: "La désignation est obligatoire." });
+  const q = nombrePositif(quantite);
+  if (!q) return res.status(400).json({ erreur: "La quantité doit être un nombre positif." });
+  const date = date_saisie || new Date().toISOString().slice(0, 10);
+  const com = (commentaire || "").trim();
+
+  if (type_mouvement === "Arrivee") {
+    const dep = departementAutorise(req, departement);
+    if (!dep) return res.status(403).json({ erreur: "Département invalide ou non autorisé pour ce compte." });
+    const { rows } = await pool.query(
+      `INSERT INTO equipements_journal (utilisateur_id, departement, departement_origine, designation, quantite, type_mouvement, date_saisie, commentaire)
+       VALUES ($1,$2,NULL,$3,$4,'Arrivee',$5,$6) RETURNING *`,
+      [req.utilisateur.id, dep, desig, q, date, com]
+    );
+    return res.json({ ok: true, saisie: rows[0] });
+  }
+
+  const origine = departementAutorise(req, departement_origine);
+  if (!origine) return res.status(403).json({ erreur: "Département d'origine invalide ou non autorisé pour ce compte." });
+  const dest = (departement || "").trim().toUpperCase();
+  if (!dest) return res.status(400).json({ erreur: "Le département de destination est obligatoire." });
+  if (dest === origine) return res.status(400).json({ erreur: "Le département de destination doit être différent du département d'origine." });
+  const { rows } = await pool.query(
+    `INSERT INTO equipements_journal (utilisateur_id, departement, departement_origine, designation, quantite, type_mouvement, date_saisie, commentaire)
+     VALUES ($1,$2,$3,$4,$5,'Transfert',$6,$7) RETURNING *`,
+    [req.utilisateur.id, dest, origine, desig, q, date, com]
   );
   res.json({ ok: true, saisie: rows[0] });
 });
@@ -115,14 +171,17 @@ router.post("/documents", upload.single("fichier"), async (req, res) => {
   res.json({ ok: true, document: rows[0] });
 });
 
-// Référentiel des localités par département (poussé par le logiciel de
-// bureau à chaque synchronisation) — sert à proposer une liste déroulante
+// Référentiel des localités et des départements (poussé par le logiciel de
+// bureau à chaque synchronisation) — sert à proposer des listes déroulantes
 // aux collaborateurs plutôt qu'une saisie libre. Renvoyé en entier (pas
-// seulement les départements du collaborateur) : le frontend filtre
-// localement selon le département choisi pour cette saisie.
+// seulement ce qui concerne le collaborateur) : le frontend filtre localement
+// selon le département choisi pour cette saisie. "departements" contient
+// TOUS les départements du projet (même sans localité connue) — utilisé
+// notamment pour la destination d'un transfert d'équipement.
 router.get("/localites", async (req, res) => {
-  const { rows } = await pool.query("SELECT departement, localite FROM localites_referentiel ORDER BY departement, localite");
-  res.json({ localites: rows });
+  const localites = await pool.query("SELECT departement, localite FROM localites_referentiel ORDER BY departement, localite");
+  const departements = await pool.query("SELECT departement FROM departements_referentiel ORDER BY departement");
+  res.json({ localites: localites.rows, departements: departements.rows.map((r) => r.departement) });
 });
 
 // Historique personnel (30 derniers jours) — pour que le collaborateur puisse
@@ -141,7 +200,11 @@ router.get("/mes-saisies", async (req, res) => {
      FROM documents_journal WHERE utilisateur_id = $1 AND date_creation > now() - interval '30 days' ORDER BY date_creation DESC LIMIT 100`,
     [req.utilisateur.id]
   );
-  res.json({ travaux: travaux.rows, materiaux: materiaux.rows, documents: documents.rows });
+  const equipements = await pool.query(
+    `SELECT * FROM equipements_journal WHERE utilisateur_id = $1 AND date_creation > now() - interval '30 days' ORDER BY date_creation DESC LIMIT 100`,
+    [req.utilisateur.id]
+  );
+  res.json({ travaux: travaux.rows, materiaux: materiaux.rows, documents: documents.rows, equipements: equipements.rows });
 });
 
 module.exports = router;
