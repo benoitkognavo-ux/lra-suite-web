@@ -1,11 +1,15 @@
+// localiteRequise : le ciment est géré au niveau du département (pas besoin
+// de préciser la localité) — le sable et les concassés, eux, sont livrés
+// directement à chaque localité, donc la localité est demandée pour eux.
 const MATERIAUX = {
-  "Ciment": { unites: ["Sac (50kg)", "kg", "Tonne"], etapes: ["Livraison", "Utilisation"] },
-  "Sable": { unites: ["m³", "Voyage (5m³)"], etapes: ["Livraison"] },
-  "Concassé": { unites: ["m³"], etapes: ["Livraison"] },
-  "Concassé 5/15": { unites: ["m³", "Tonne"], etapes: ["Livraison"] },
-  "Concassé 15/25": { unites: ["m³", "Tonne"], etapes: ["Livraison"] },
+  "Ciment": { unites: ["Sac (50kg)", "kg", "Tonne"], etapes: ["Livraison", "Utilisation"], localiteRequise: false },
+  "Sable": { unites: ["m³", "Voyage (5m³)"], etapes: ["Livraison"], localiteRequise: true },
+  "Concassé": { unites: ["m³"], etapes: ["Livraison"], localiteRequise: true },
+  "Concassé 5/15": { unites: ["m³", "Tonne"], etapes: ["Livraison"], localiteRequise: true },
+  "Concassé 15/25": { unites: ["m³", "Tonne"], etapes: ["Livraison"], localiteRequise: true },
 };
 const ETAPE_LABEL = { Livraison: "Reçu", Utilisation: "Utilisé" };
+const TYPE_MOUVEMENT_EQUIPEMENT_LABEL = { Arrivee: "Arrivée", Transfert: "Transfert" };
 const TYPE_DOCUMENT_LABEL = {
   PVReceptionSite: "PV de réception — site",
   PVReceptionUsine: "PV de réception — usine",
@@ -27,10 +31,14 @@ const CATEGORIE_LABEL = {
 
 let utilisateurCourant = null;
 let localitesParDepartement = {};
+let departementsConnus = [];
 
-// Récupère le référentiel des localités (poussé par le logiciel de bureau à
-// chaque synchronisation) et le regroupe par département — permet de
-// proposer une liste déroulante plutôt qu'une saisie libre.
+// Récupère le référentiel des localités et des départements (poussé par le
+// logiciel de bureau à chaque synchronisation) et regroupe les localités par
+// département — permet de proposer des listes déroulantes plutôt qu'une
+// saisie libre. departementsConnus contient TOUS les départements du projet,
+// même ceux sans aucune localité encore enregistrée (utile pour la
+// destination d'un transfert d'équipement).
 async function chargerLocalites() {
   try {
     const data = await api("/saisie/localites");
@@ -39,8 +47,10 @@ async function chargerLocalites() {
       if (!localitesParDepartement[l.departement]) localitesParDepartement[l.departement] = [];
       localitesParDepartement[l.departement].push(l.localite);
     }
+    departementsConnus = data.departements && data.departements.length ? data.departements : Object.keys(localitesParDepartement);
   } catch (err) {
     localitesParDepartement = {};
+    departementsConnus = [];
   }
 }
 
@@ -179,11 +189,35 @@ function afficherSaisie() {
       <label id="lbl-mat-etape">Mouvement
         <select id="mat-etape"></select>
       </label>
+      <label id="lbl-mat-localite" style="display:none;">Localité de livraison
+        <select id="mat-localite" disabled><option value="">Chargement…</option></select>
+      </label>
+      <p class="hint" id="hint-mat-localite" style="display:none;">Aucune localité configurée pour ce département — demandez à l'ingénieur de les ajouter dans le logiciel de bureau, puis de synchroniser.</p>
       <label>Quantité<input id="mat-quantite" type="number" min="0.01" step="0.01" /></label>
       <label>Unité<select id="mat-unite"></select></label>
       <label>Date<input id="mat-date" type="date" /></label>
       <button class="btn" id="btn-mat-save">Enregistrer</button>
       <div id="msg-mat" class="msg hidden"></div>
+    </div>
+
+    <div class="card">
+      <h2>Équipements &amp; matériel${plusieursDepartements ? "" : " — " + utilisateurCourant.departements[0]}</h2>
+      <p class="hint" style="margin-top:0;">Signalez ici un moule de pointe de diamant, une barre à mine, ou tout autre matériel/équipement qui arrive dans le département, ou que vous envoyez vers un autre département.</p>
+      <label>Mouvement
+        <select id="eq-mouvement">
+          <option value="Arrivee">Matériel arrivé dans le département</option>
+          <option value="Transfert">Envoi vers un autre département</option>
+        </select>
+      </label>
+      <label id="lbl-eq-destination" style="display:none;">Département de destination
+        <select id="eq-destination"></select>
+      </label>
+      <label>Désignation<input id="eq-designation" placeholder="ex: Moule de pointe de diamant, Barre à mine..." /></label>
+      <label>Quantité<input id="eq-quantite" type="number" min="1" step="1" /></label>
+      <label>Date<input id="eq-date" type="date" /></label>
+      <label>Commentaire (optionnel)<input id="eq-commentaire" /></label>
+      <button class="btn" id="btn-eq-save">Enregistrer</button>
+      <div id="msg-eq" class="msg hidden"></div>
     </div>
 
     <div class="card">
@@ -208,7 +242,37 @@ function afficherSaisie() {
 
   document.getElementById("tr-date").value = auj();
   document.getElementById("mat-date").value = auj();
+  document.getElementById("eq-date").value = auj();
   document.getElementById("doc-date").value = auj();
+
+  function departementSaisieActuel() {
+    const select = document.getElementById("saisie-departement");
+    return select ? select.value : utilisateurCourant.departements[0];
+  }
+
+  // Remplit un menu déroulant de localités à partir du référentiel envoyé par
+  // le logiciel de bureau, filtré sur le département actuellement sélectionné
+  // pour cette saisie. Renvoie false si aucune localité n'est configurée pour
+  // ce département (pour bloquer l'enregistrement plutôt que d'accepter une
+  // saisie libre).
+  function remplirLocalites(selectId) {
+    const liste = localitesParDepartement[departementSaisieActuel()] || [];
+    const select = document.getElementById(selectId);
+    if (!liste.length) {
+      select.innerHTML = `<option value="">Aucune localité disponible</option>`;
+      select.disabled = true;
+    } else {
+      select.innerHTML = liste.map((l) => `<option value="${l}">${l}</option>`).join("");
+      select.disabled = false;
+    }
+    return liste.length > 0;
+  }
+
+  function majOptionsLocalite() {
+    const ok = remplirLocalites("tr-localite");
+    document.getElementById("btn-tr-save").disabled = !ok;
+    document.getElementById("hint-localite").style.display = ok ? "none" : "";
+  }
 
   function majOptionsMateriau() {
     const m = document.getElementById("mat-materiau").value;
@@ -217,40 +281,54 @@ function afficherSaisie() {
     etapeSelect.innerHTML = cfg.etapes.map((e) => `<option value="${e}">${ETAPE_LABEL[e]}</option>`).join("");
     document.getElementById("lbl-mat-etape").style.display = cfg.etapes.length > 1 ? "" : "none";
     document.getElementById("mat-unite").innerHTML = cfg.unites.map((u) => `<option value="${u}">${u}</option>`).join("");
+
+    const lblLocalite = document.getElementById("lbl-mat-localite");
+    const hintLocalite = document.getElementById("hint-mat-localite");
+    const btnSave = document.getElementById("btn-mat-save");
+    if (cfg.localiteRequise) {
+      lblLocalite.style.display = "";
+      const ok = remplirLocalites("mat-localite");
+      hintLocalite.style.display = ok ? "none" : "";
+      btnSave.disabled = !ok;
+    } else {
+      lblLocalite.style.display = "none";
+      hintLocalite.style.display = "none";
+      btnSave.disabled = false;
+    }
   }
   document.getElementById("mat-materiau").addEventListener("change", majOptionsMateriau);
   majOptionsMateriau();
 
-  function departementSaisieActuel() {
-    const select = document.getElementById("saisie-departement");
-    return select ? select.value : utilisateurCourant.departements[0];
+  // Menu de destination pour un transfert d'équipement : tous les départements
+  // connus (référentiel des localités) sauf celui d'où part l'envoi.
+  function majOptionsDestinationEquipement() {
+    const mouvement = document.getElementById("eq-mouvement").value;
+    const lbl = document.getElementById("lbl-eq-destination");
+    const select = document.getElementById("eq-destination");
+    if (mouvement !== "Transfert") { lbl.style.display = "none"; return; }
+    lbl.style.display = "";
+    const origine = departementSaisieActuel();
+    const options = departementsConnus.filter((d) => d !== origine);
+    select.innerHTML = options.length
+      ? options.map((d) => `<option value="${d}">${d}</option>`).join("")
+      : `<option value="">Aucun autre département disponible</option>`;
   }
+  document.getElementById("eq-mouvement").addEventListener("change", majOptionsDestinationEquipement);
+  majOptionsDestinationEquipement();
 
-  // Remplit la liste déroulante des localités à partir du référentiel envoyé
-  // par le logiciel de bureau, filtrée sur le département actuellement
-  // sélectionné pour cette saisie. Si aucune localité n'est configurée pour
-  // ce département, bloque l'enregistrement plutôt que d'accepter une saisie
-  // libre.
-  function majOptionsLocalite() {
-    const liste = localitesParDepartement[departementSaisieActuel()] || [];
-    const select = document.getElementById("tr-localite");
-    const btn = document.getElementById("btn-tr-save");
-    const hint = document.getElementById("hint-localite");
-    if (!liste.length) {
-      select.innerHTML = `<option value="">Aucune localité disponible</option>`;
-      select.disabled = true;
-      btn.disabled = true;
-      hint.style.display = "";
-    } else {
-      select.innerHTML = liste.map((l) => `<option value="${l}">${l}</option>`).join("");
-      select.disabled = false;
-      btn.disabled = false;
-      hint.style.display = "none";
-    }
-  }
   const selectDepartement = document.getElementById("saisie-departement");
-  if (selectDepartement) selectDepartement.addEventListener("change", majOptionsLocalite);
-  chargerLocalites().then(majOptionsLocalite);
+  if (selectDepartement) {
+    selectDepartement.addEventListener("change", () => {
+      majOptionsLocalite();
+      majOptionsMateriau();
+      majOptionsDestinationEquipement();
+    });
+  }
+  chargerLocalites().then(() => {
+    majOptionsLocalite();
+    majOptionsMateriau();
+    majOptionsDestinationEquipement();
+  });
 
   document.getElementById("btn-tr-save").addEventListener("click", async () => {
     try {
@@ -273,19 +351,50 @@ function afficherSaisie() {
 
   document.getElementById("btn-mat-save").addEventListener("click", async () => {
     try {
-      await api("/saisie/materiaux", { method: "POST", body: {
+      const materiau = document.getElementById("mat-materiau").value;
+      const cfg = MATERIAUX[materiau];
+      const body = {
         departement: departementSaisieActuel(),
-        materiau: document.getElementById("mat-materiau").value,
+        materiau,
         etape: document.getElementById("mat-etape").value,
         quantite: document.getElementById("mat-quantite").value,
         unite: document.getElementById("mat-unite").value,
         date_saisie: document.getElementById("mat-date").value,
-      }});
+      };
+      if (cfg.localiteRequise) body.localite = document.getElementById("mat-localite").value;
+      await api("/saisie/materiaux", { method: "POST", body });
       afficherMessage("msg-mat", "Enregistré.", true);
       document.getElementById("mat-quantite").value = "";
       chargerMesSaisies();
     } catch (err) {
       afficherMessage("msg-mat", err.message, false);
+    }
+  });
+
+  document.getElementById("btn-eq-save").addEventListener("click", async () => {
+    try {
+      const mouvement = document.getElementById("eq-mouvement").value;
+      const body = {
+        type_mouvement: mouvement,
+        designation: document.getElementById("eq-designation").value,
+        quantite: document.getElementById("eq-quantite").value,
+        date_saisie: document.getElementById("eq-date").value,
+        commentaire: document.getElementById("eq-commentaire").value,
+      };
+      if (mouvement === "Arrivee") {
+        body.departement = departementSaisieActuel();
+      } else {
+        body.departement_origine = departementSaisieActuel();
+        body.departement = document.getElementById("eq-destination").value;
+      }
+      await api("/saisie/equipements", { method: "POST", body });
+      afficherMessage("msg-eq", "Enregistré.", true);
+      document.getElementById("eq-designation").value = "";
+      document.getElementById("eq-quantite").value = "";
+      document.getElementById("eq-commentaire").value = "";
+      chargerMesSaisies();
+    } catch (err) {
+      afficherMessage("msg-eq", err.message, false);
     }
   });
 
@@ -322,12 +431,19 @@ async function chargerMesSaisies() {
     })),
     ...data.materiaux.map((r) => ({
       date: r.date_saisie.slice(0, 10),
-      texte: `${prefixeDep(r.departement)}${r.materiau} ${ETAPE_LABEL[r.etape].toLowerCase()} : ${r.quantite} ${r.unite}`,
+      texte: `${prefixeDep(r.departement)}${r.materiau} ${ETAPE_LABEL[r.etape].toLowerCase()}${r.localite ? " — " + r.localite : ""} : ${r.quantite} ${r.unite}`,
       ts: r.date_creation,
     })),
     ...data.documents.map((r) => ({
       date: r.date_saisie.slice(0, 10),
       texte: `${prefixeDep(r.departement)}${TYPE_DOCUMENT_LABEL[r.type]} — ${r.nom_fichier}`,
+      ts: r.date_creation,
+    })),
+    ...(data.equipements || []).map((r) => ({
+      date: r.date_saisie.slice(0, 10),
+      texte: r.type_mouvement === "Transfert"
+        ? `${r.designation} — Transfert ${r.departement_origine} → ${r.departement} : ${r.quantite}`
+        : `${prefixeDep(r.departement)}${r.designation} — ${TYPE_MOUVEMENT_EQUIPEMENT_LABEL[r.type_mouvement]} : ${r.quantite}`,
       ts: r.date_creation,
     })),
   ].sort((a, b) => new Date(b.ts) - new Date(a.ts));
