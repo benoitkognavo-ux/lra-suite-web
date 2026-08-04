@@ -55,6 +55,13 @@ CREATE TABLE IF NOT EXISTS materiaux_journal (
 );
 CREATE INDEX IF NOT EXISTS idx_materiaux_journal_date_creation ON materiaux_journal (date_creation);
 
+-- Localité de livraison : le ciment est géré au niveau du département (pas
+-- livré localité par localité), mais le sable et les concassés SONT livrés
+-- directement à chaque localité — la colonne reste facultative en base (le
+-- ciment continue de fonctionner sans elle) ; c'est la route de saisie
+-- (routes/saisie.js) qui l'exige pour tout matériau autre que le ciment.
+ALTER TABLE materiaux_journal ADD COLUMN IF NOT EXISTS localite TEXT NOT NULL DEFAULT '';
+
 -- Clé(s) utilisées par le logiciel de bureau pour appeler l'API de synchronisation
 -- (authentification machine-à-machine, distincte des sessions utilisateur web).
 CREATE TABLE IF NOT EXISTS api_keys (
@@ -104,6 +111,29 @@ CREATE TABLE IF NOT EXISTS documents_journal (
 );
 CREATE INDEX IF NOT EXISTS idx_documents_journal_date_creation ON documents_journal (date_creation);
 
+-- Mouvements d'équipements / matériel (moules de pointe de diamant, barres à
+-- mine, etc.) signalés par les collaborateurs : soit une ARRIVÉE (matériel
+-- reçu dans un département), soit un TRANSFERT (envoyé d'un département vers
+-- un autre). "departement" contient toujours la destination (là où le
+-- matériel se trouve désormais) ; "departement_origine" n'est renseigné que
+-- pour un transfert (là d'où le matériel est parti). Même principe que les
+-- autres journaux : jamais de valeur absolue écrasée, le logiciel de bureau
+-- applique chaque mouvement (incrémente la destination, décrémente
+-- l'origine) à ses propres quantités.
+CREATE TABLE IF NOT EXISTS equipements_journal (
+  id SERIAL PRIMARY KEY,
+  utilisateur_id INTEGER NOT NULL REFERENCES users(id),
+  departement TEXT NOT NULL,
+  departement_origine TEXT,
+  designation TEXT NOT NULL,
+  quantite NUMERIC NOT NULL CHECK (quantite > 0),
+  type_mouvement TEXT NOT NULL CHECK (type_mouvement IN ('Arrivee', 'Transfert')),
+  date_saisie DATE NOT NULL,
+  commentaire TEXT NOT NULL DEFAULT '',
+  date_creation TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_equipements_journal_date_creation ON equipements_journal (date_creation);
+
 -- Référentiel des localités par département, poussé automatiquement par le
 -- logiciel de bureau à chaque synchronisation (à partir du projet actif) :
 -- permet au portail web de proposer une liste déroulante aux collaborateurs
@@ -114,4 +144,15 @@ CREATE TABLE IF NOT EXISTS localites_referentiel (
   departement TEXT NOT NULL,
   localite TEXT NOT NULL,
   PRIMARY KEY (departement, localite)
+);
+
+-- Référentiel des départements du projet actif, poussé en même temps que
+-- localites_referentiel (voir PUT /api/referentiel/localites). Distinct de
+-- la table ci-dessus car un département peut exister dans le projet (des
+-- travaux, du matériel...) sans qu'aucune localité n'y soit encore
+-- enregistrée — utile notamment pour proposer un département comme
+-- destination d'un transfert d'équipement même s'il n'a pas encore de
+-- localité connue.
+CREATE TABLE IF NOT EXISTS departements_referentiel (
+  departement TEXT PRIMARY KEY
 );
