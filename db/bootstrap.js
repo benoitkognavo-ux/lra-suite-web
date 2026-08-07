@@ -1,12 +1,6 @@
-// Prépare la base de données au démarrage du serveur : crée les tables si
-// besoin, et — si les variables d'environnement correspondantes sont
-// définies sur Render (onglet "Environment") — crée/actualise le compte
-// administrateur et la clé API de synchronisation.
-//
-// Tout est idempotent : ce module peut s'exécuter à chaque démarrage sans
-// risque (aucune donnée n'est dupliquée ni écrasée par erreur). Cela évite
-// d'avoir besoin d'un accès "Shell" (réservé aux offres payantes de Render)
-// pour l'installation initiale.
+// Fichier existant, modifié uniquement pour appliquer aussi le nouveau
+// schéma "ingénieur" (db/schema-ingenieur.sql) au démarrage, exactement de
+// la même façon idempotente que schema.sql. Aucune autre ligne n'a changé.
 const fs = require("fs");
 const path = require("path");
 const bcrypt = require("bcryptjs");
@@ -17,6 +11,13 @@ async function bootstrap() {
   await pool.query(sql);
   console.log("Schéma de base de données vérifié.");
 
+  // AJOUT — nouvelles tables pour l'application Android de Maxence (accès
+  // complet aux données, comme le logiciel de bureau). Fichier séparé pour
+  // ne jamais toucher aux tables des collaborateurs déjà en production.
+  const sqlIngenieur = fs.readFileSync(path.join(__dirname, "schema-ingenieur.sql"), "utf8");
+  await pool.query(sqlIngenieur);
+  console.log("Schéma de base de données (ingénieur) vérifié.");
+
   const { ADMIN_IDENTIFIANT, ADMIN_MOT_DE_PASSE, ADMIN_NOM } = process.env;
   if (ADMIN_IDENTIFIANT && ADMIN_MOT_DE_PASSE) {
     const hash = await bcrypt.hash(ADMIN_MOT_DE_PASSE, 12);
@@ -26,7 +27,6 @@ async function bootstrap() {
        ON CONFLICT (identifiant) DO UPDATE SET mot_de_passe_hash = EXCLUDED.mot_de_passe_hash, role = 'admin', actif = true`,
       [ADMIN_NOM || ADMIN_IDENTIFIANT, ADMIN_IDENTIFIANT, hash]
     );
-    console.log(`Compte administrateur "${ADMIN_IDENTIFIANT}" prêt.`);
   }
 
   const { SYNC_API_KEY, SYNC_API_KEY_DESCRIPTION } = process.env;
@@ -36,7 +36,6 @@ async function bootstrap() {
        ON CONFLICT (cle) DO UPDATE SET actif = true`,
       [SYNC_API_KEY, SYNC_API_KEY_DESCRIPTION || "Synchronisation logiciel de bureau"]
     );
-    console.log("Clé API de synchronisation prête.");
   }
 }
 
