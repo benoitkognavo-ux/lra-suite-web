@@ -27,7 +27,12 @@ const TYPES_DOCUMENTS = [
 
 // Ces valeurs doivent correspondre EXACTEMENT aux catégories utilisées dans
 // le logiciel de bureau (table travaux, colonne categorie), pour que la
-// synchronisation incrémente les bonnes lignes.
+// synchronisation incrémente les bonnes lignes. Les 5 catégories Électricité
+// et les 9 catégories Câbles reprennent telles quelles les clés fixes
+// définies côté bureau (voir renderer/modules/electricite.js et cables.js) —
+// les catégories personnalisées que Maxence ajoute lui-même à la volée dans
+// le logiciel de bureau (« + Nouvelle catégorie… ») ne sont PAS incluses ici
+// et restent donc saisissables uniquement depuis le logiciel de bureau.
 const CATEGORIES_TRAVAUX = [
   "Implantation",
   "FouillesImplantation",
@@ -35,6 +40,22 @@ const CATEGORIES_TRAVAUX = [
   "FouillesMALTMasse",
   "PointesDiamant",
   "Plateforme",
+  // Électricité
+  "IACM",
+  "DMT_CC",
+  "Transformateur",
+  "MiseTerreNeutreBT",
+  "MiseTerreMassesMetalliques",
+  // Câbles
+  "CableBTRehab50",
+  "CableBTRenforce70",
+  "LigneHTA75Aerienne",
+  "LigneHTA546Aerienne",
+  "LigneBT3x70",
+  "LigneBT3x50",
+  "LigneMixteHTA755BT3x70",
+  "LigneMixteHTA546BT3x70",
+  "LigneMixteHTA546BT3x50",
 ];
 // Étapes autorisées par matériau : le ciment peut être reçu OU utilisé, les
 // autres (sable, concassés) ne sont demandés qu'à la réception pour l'instant.
