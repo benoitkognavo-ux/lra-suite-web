@@ -36,9 +36,21 @@ CREATE INDEX IF NOT EXISTS idx_travaux_journal_date_creation ON travaux_journal 
 -- CREATE TABLE ci-dessus) pour pouvoir l'élargir plus tard sans jamais
 -- toucher aux lignes déjà enregistrées : ces valeurs doivent correspondre
 -- EXACTEMENT aux catégories du logiciel de bureau (table travaux).
+-- Élargie pour inclure les catégories Électricité (IACM, DMT-CC,
+-- Transformateur, Mise à la terre — Neutre BT/Masses métalliques) et Câbles
+-- (9 types de ligne) ajoutées côté logiciel de bureau — voir
+-- renderer/modules/electricite.js et cables.js. Les catégories
+-- personnalisées créées à la volée par Maxence dans le logiciel de bureau ne
+-- sont volontairement pas incluses ici (voir CATEGORIES_TRAVAUX dans
+-- routes/saisie.js).
 ALTER TABLE travaux_journal DROP CONSTRAINT IF EXISTS travaux_journal_categorie_check;
 ALTER TABLE travaux_journal ADD CONSTRAINT travaux_journal_categorie_check
-  CHECK (categorie IN ('Implantation', 'FouillesImplantation', 'FouillesMALTTerre', 'FouillesMALTMasse', 'PointesDiamant', 'Plateforme'));
+  CHECK (categorie IN (
+    'Implantation', 'FouillesImplantation', 'FouillesMALTTerre', 'FouillesMALTMasse', 'PointesDiamant', 'Plateforme',
+    'IACM', 'DMT_CC', 'Transformateur', 'MiseTerreNeutreBT', 'MiseTerreMassesMetalliques',
+    'CableBTRehab50', 'CableBTRenforce70', 'LigneHTA75Aerienne', 'LigneHTA546Aerienne',
+    'LigneBT3x70', 'LigneBT3x50', 'LigneMixteHTA755BT3x70', 'LigneMixteHTA546BT3x70', 'LigneMixteHTA546BT3x50'
+  ));
 
 -- Saisies quotidiennes des mouvements matériaux (réception, utilisation).
 CREATE TABLE IF NOT EXISTS materiaux_journal (
