@@ -69,6 +69,12 @@ app.use("/api/admin", exigerConnexion, exigerAdmin, require("./routes/admin"));
 // AJOUT — API complète pour l'application Android de Maxence (mêmes droits
 // que le compte administrateur : c'est le même compte qui se connecte).
 app.use("/api/ingenieur", exigerConnexion, exigerAdmin, require("./routes/ingenieur"));
+// AJOUT — reçoit du logiciel de bureau une photographie complète du projet
+// actif (voir routes/ingenieur-sync.js), pour que l'appli Android affiche
+// les vraies données existantes et pas seulement ce qui est saisi depuis le
+// téléphone. Authentification par clé API (comme /api/export), pas par
+// session : c'est le logiciel de bureau qui appelle, pas un navigateur.
+app.use("/api/ingenieur-sync", exigerCleApi, require("./routes/ingenieur-sync"));
 app.use("/api", exigerCleApi, require("./routes/export"));
 
 app.use(express.static(path.join(__dirname, "public")));
