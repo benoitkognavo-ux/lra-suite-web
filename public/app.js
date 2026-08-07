@@ -19,15 +19,49 @@ const TYPE_DOCUMENT_LABEL = {
 };
 // Les clés doivent correspondre EXACTEMENT aux catégories du logiciel de
 // bureau (table travaux, colonne categorie) pour que la synchronisation
-// incrémente les bonnes lignes.
-const CATEGORIE_LABEL = {
-  Implantation: "Poteaux implantés",
-  FouillesImplantation: "Fouilles pour implantation réalisées",
-  FouillesMALTTerre: "Fouilles mise à la terre — Terre réalisées",
-  FouillesMALTMasse: "Fouilles mise à la terre — Masse réalisées",
-  PointesDiamant: "Pointes de diamant réalisées",
-  Plateforme: "Plateformes de manœuvre réalisées",
-};
+// incrémente les bonnes lignes. Regroupées par domaine (comme dans le
+// logiciel de bureau, voir renderer/modules/electricite.js et cables.js)
+// pour que le menu déroulant reste lisible malgré le nombre de catégories.
+const GROUPES_CATEGORIES = [
+  {
+    groupe: "Implantation & fouilles",
+    categories: {
+      Implantation: "Poteaux implantés",
+      FouillesImplantation: "Fouilles pour implantation réalisées",
+      FouillesMALTTerre: "Fouilles mise à la terre — Terre réalisées",
+      FouillesMALTMasse: "Fouilles mise à la terre — Masse réalisées",
+      PointesDiamant: "Pointes de diamant réalisées",
+      Plateforme: "Plateformes de manœuvre réalisées",
+    },
+  },
+  {
+    groupe: "Électricité",
+    categories: {
+      IACM: "IACM",
+      DMT_CC: "DMT-CC",
+      Transformateur: "Transformateur",
+      MiseTerreNeutreBT: "Mise à la terre — Neutre BT",
+      MiseTerreMassesMetalliques: "Mise à la terre — Masses métalliques",
+    },
+  },
+  {
+    groupe: "Câbles",
+    categories: {
+      CableBTRehab50: "Ligne BT à réhabiliter en 50mm²",
+      CableBTRenforce70: "Ligne BT à renforcer en 70mm²",
+      LigneHTA75Aerienne: "Ligne HTA 75mm² aérienne à construire",
+      LigneHTA546Aerienne: "Ligne HTA 54,6mm² aérienne à construire",
+      LigneBT3x70: "Ligne BT 3×70mm² + 54,6mm² + 2×16mm² à construire",
+      LigneBT3x50: "Ligne BT 3×50mm² + 54,6mm² + 2×16mm² à construire",
+      LigneMixteHTA755BT3x70: "Ligne mixte HTA 75,5mm² + BT 3×70mm² + 54,6mm² + 2×16mm² à construire",
+      LigneMixteHTA546BT3x70: "Ligne mixte HTA 54,6mm² + BT 3×70mm² + 54,6mm² + 2×16mm² à construire",
+      LigneMixteHTA546BT3x50: "Ligne mixte HTA 54,6mm² + BT 3×50mm² + 54,6mm² + 2×16mm² à construire",
+    },
+  },
+];
+// Table à plat (toutes catégories confondues) pour un accès direct par clé,
+// utilisée dans l'historique des saisies (chargerMesSaisies) et ailleurs.
+const CATEGORIE_LABEL = Object.assign({}, ...GROUPES_CATEGORIES.map((g) => g.categories));
 
 let utilisateurCourant = null;
 let localitesParDepartement = {};
@@ -165,7 +199,11 @@ function afficherSaisie() {
       <h2>Travaux réalisés aujourd'hui</h2>
       <label>Catégorie
         <select id="tr-categorie">
-          ${Object.entries(CATEGORIE_LABEL).map(([v, label]) => `<option value="${v}">${label}</option>`).join("")}
+          ${GROUPES_CATEGORIES.map((g) => `
+            <optgroup label="${g.groupe}">
+              ${Object.entries(g.categories).map(([v, label]) => `<option value="${v}">${label}</option>`).join("")}
+            </optgroup>
+          `).join("")}
         </select>
       </label>
       <label>Localité
