@@ -43,7 +43,13 @@ app.use(cors({
   credentials: true,
 }));
 
-app.use(express.json());
+// AJOUT — limite par défaut d'Express (100 Ko) bien trop basse pour la
+// photographie complète envoyée par /api/ingenieur-sync/projet-actif (tous
+// les travaux, flux, matériaux et équipements d'un vrai projet en cours
+// dépassent largement 100 Ko) : sans ce réglage, l'envoi échoue avec une
+// erreur 500 générique avant même d'atteindre la route (voir
+// routes/ingenieur-sync.js).
+app.use(express.json({ limit: "25mb" }));
 
 const enProduction = process.env.NODE_ENV === "production";
 app.use(
