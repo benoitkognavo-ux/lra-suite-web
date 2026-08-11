@@ -46,13 +46,18 @@ router.get("/projet-actif", async (req, res) => {
       return res.status(404).json({ erreur: "Projet introuvable sur le portail web." });
     }
 
-    const [travaux, flux, materiaux, equipements, categoriesCustom] = await Promise.all([
+    const [travaux, flux, materiaux, equipements, categoriesCustom, commandesRows] = await Promise.all([
       pool.query(
         "SELECT departement, localite, type_poteau, categorie, prevu, realise, date_maj FROM ing_travaux WHERE projet_id = $1",
         [projetId]
       ),
+      // commande_id IS NULL : n'inclut jamais ici les lignes rattachées à une
+      // commande groupée de poteaux (voir ci-dessous, "commandes") — sinon
+      // elles seraient transmises deux fois (à plat ET imbriquées), ce qui
+      // doublerait le total "poteaux commandés" une fois réappliqué côté
+      // logiciel de bureau (voir remplacerProjetDepuisWeb).
       pool.query(
-        "SELECT departement, localite, type_poteau, quantite, etape, date_mvt, reference, commentaire, motif, motif_detail, statut FROM ing_flux_poteaux WHERE projet_id = $1",
+        "SELECT departement, localite, type_poteau, quantite, etape, date_mvt, reference, commentaire, motif, motif_detail, statut FROM ing_flux_poteaux WHERE projet_id = $1 AND commande_id IS NULL",
         [projetId]
       ),
       pool.query(
@@ -67,7 +72,37 @@ router.get("/projet-actif", async (req, res) => {
         "SELECT domaine, categorie, label FROM ing_categories_custom WHERE projet_id = $1",
         [projetId]
       ),
+      pool.query(
+        "SELECT id, etape, date_mvt, departement, reference, commentaire FROM ing_commandes WHERE projet_id = $1",
+        [projetId]
+      ),
     ]);
+
+    // Commandes groupées de poteaux : chaque commande avec ses lignes
+    // imbriquées (voir listCommandesAvecLignes côté logiciel de bureau) —
+    // jamais transmises via leur id brut (sans signification sur la machine
+    // qui les recevra), toujours comme un bloc autonome.
+    const commandeIds = commandesRows.rows.map((c) => c.id);
+    const lignesParCommande = new Map();
+    if (commandeIds.length) {
+      const { rows: lignesRows } = await pool.query(
+        "SELECT commande_id, type_poteau, quantite, etape, date_mvt, reference, commentaire, motif, motif_detail, statut FROM ing_flux_poteaux WHERE commande_id = ANY($1::int[])",
+        [commandeIds]
+      );
+      for (const l of lignesRows) {
+        if (!lignesParCommande.has(l.commande_id)) lignesParCommande.set(l.commande_id, []);
+        const { commande_id, ...ligne } = l;
+        lignesParCommande.get(l.commande_id).push(ligne);
+      }
+    }
+    const commandes = commandesRows.rows.map((c) => ({
+      etape: c.etape,
+      date_mvt: c.date_mvt,
+      departement: c.departement,
+      reference: c.reference,
+      commentaire: c.commentaire,
+      lignes: lignesParCommande.get(c.id) || [],
+    }));
 
     res.json({
       projet: projetRows[0],
@@ -76,6 +111,7 @@ router.get("/projet-actif", async (req, res) => {
       materiaux: materiaux.rows,
       equipements: equipements.rows,
       categoriesCustom: categoriesCustom.rows,
+      commandes,
     });
   } catch (err) {
     console.error(err);
@@ -84,7 +120,7 @@ router.get("/projet-actif", async (req, res) => {
 });
 
 router.put("/projet-actif", async (req, res) => {
-  const { projet, travaux, flux, materiaux, equipements, categoriesCustom } = req.body || {};
+  const { projet, travaux, flux, materiaux, equipements, categoriesCustom, commandes } = req.body || {};
   if (!projet || !projet.id || !projet.nom) {
     return res.status(400).json({ erreur: "Projet manquant ou incomplet (id et nom requis)." });
   }
@@ -129,6 +165,28 @@ router.put("/projet-actif", async (req, res) => {
       );
     }
 
+    // Commandes groupées de poteaux (voir listCommandesAvecLignes côté
+    // logiciel de bureau) : jamais incluses dans "flux" ci-dessus
+    // (flux_poteaux.commande_id y est toujours NULL), donc supprimées et
+    // recréées à part ici, avec leurs lignes réinsérées dans
+    // ing_flux_poteaux en pointant vers le nouvel id généré par Postgres.
+    await client.query("DELETE FROM ing_commandes WHERE projet_id = $1", [projet.id]);
+    for (const c of commandes || []) {
+      const { rows: cRows } = await client.query(
+        `INSERT INTO ing_commandes (projet_id, etape, date_mvt, departement, reference, commentaire)
+         VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+        [projet.id, c.etape, c.date_mvt || "", c.departement, c.reference || "", c.commentaire || ""]
+      );
+      const commandeId = cRows[0].id;
+      for (const l of c.lignes || []) {
+        await client.query(
+          `INSERT INTO ing_flux_poteaux (projet_id, commande_id, departement, localite, type_poteau, quantite, etape, date_mvt, reference, commentaire, motif, motif_detail, statut)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+          [projet.id, commandeId, c.departement, "", l.type_poteau || "", l.quantite || 0, l.etape || c.etape, l.date_mvt || c.date_mvt || "", l.reference || c.reference || "", l.commentaire || "", l.motif || "", l.motif_detail || "", l.statut || ""]
+        );
+      }
+    }
+
     await client.query("DELETE FROM ing_materiaux_mouvements WHERE projet_id = $1", [projet.id]);
     for (const m of materiaux || []) {
       await client.query(
@@ -165,6 +223,7 @@ router.put("/projet-actif", async (req, res) => {
         materiaux: (materiaux || []).length,
         equipements: (equipements || []).length,
         categoriesCustom: (categoriesCustom || []).length,
+        commandes: (commandes || []).length,
       },
     });
   } catch (err) {
