@@ -21,6 +21,68 @@ const { pool } = require("../db/pool");
 
 const router = express.Router();
 
+// Contrepartie en lecture du PUT ci-dessous — permet à un logiciel de
+// bureau qui n'a JAMAIS eu ce projet en local (typiquement : une nouvelle
+// installation sur l'ordinateur d'un second utilisateur) de le télécharger
+// intégralement au lieu de partir d'une base vide. Renvoie le projet actif
+// (celui désigné par ing_settings.projet_actif_id) exactement dans le même
+// format que celui envoyé par le PUT, pour pouvoir être réappliqué tel quel
+// côté logiciel de bureau (voir pull-portail-web.js).
+router.get("/projet-actif", async (req, res) => {
+  try {
+    const { rows: settingsRows } = await pool.query(
+      "SELECT value FROM ing_settings WHERE key = 'projet_actif_id'"
+    );
+    const projetId = settingsRows[0] ? parseInt(settingsRows[0].value, 10) : null;
+    if (!projetId) {
+      return res.status(404).json({ erreur: "Aucun projet n'a encore été envoyé au portail web depuis le logiciel de bureau." });
+    }
+
+    const { rows: projetRows } = await pool.query(
+      "SELECT id, nom, description FROM ing_projets WHERE id = $1",
+      [projetId]
+    );
+    if (!projetRows.length) {
+      return res.status(404).json({ erreur: "Projet introuvable sur le portail web." });
+    }
+
+    const [travaux, flux, materiaux, equipements, categoriesCustom] = await Promise.all([
+      pool.query(
+        "SELECT departement, localite, type_poteau, categorie, prevu, realise, date_maj FROM ing_travaux WHERE projet_id = $1",
+        [projetId]
+      ),
+      pool.query(
+        "SELECT departement, localite, type_poteau, quantite, etape, date_mvt, reference, commentaire, motif, motif_detail, statut FROM ing_flux_poteaux WHERE projet_id = $1",
+        [projetId]
+      ),
+      pool.query(
+        "SELECT departement, localite, materiau, unite, quantite, etape, date_mvt, reference, commentaire FROM ing_materiaux_mouvements WHERE projet_id = $1",
+        [projetId]
+      ),
+      pool.query(
+        "SELECT designation, departement, statut, commentaire, code, localite, marque_modele, n_serie, date_mise_service, derniere_maintenance, quantite FROM ing_equipements WHERE projet_id = $1",
+        [projetId]
+      ),
+      pool.query(
+        "SELECT domaine, categorie, label FROM ing_categories_custom WHERE projet_id = $1",
+        [projetId]
+      ),
+    ]);
+
+    res.json({
+      projet: projetRows[0],
+      travaux: travaux.rows,
+      flux: flux.rows,
+      materiaux: materiaux.rows,
+      equipements: equipements.rows,
+      categoriesCustom: categoriesCustom.rows,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erreur: "Échec de la récupération du projet : " + (err.message || String(err)) });
+  }
+});
+
 router.put("/projet-actif", async (req, res) => {
   const { projet, travaux, flux, materiaux, equipements, categoriesCustom } = req.body || {};
   if (!projet || !projet.id || !projet.nom) {
